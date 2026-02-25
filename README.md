@@ -7,7 +7,7 @@ DataverseOptionSetHelper is a utility app for Microsoft Dataverse that simplifie
 
 It’s also designed to handle large option set value volumes more effectively than standard approaches: many XrmToolBox plugins cap retrieval at ~250 values, and the Dataverse Web API commonly tops out at ~1000, while this helper is built to work beyond those limits.
 
-![OptionSet Helper Screenshot](imgs\DataverseOptionSetHelper.png)
+![OptionSet Helper Screenshot](imgs/DataverseOptionSetHelper.png)
 
 ## Features
 
