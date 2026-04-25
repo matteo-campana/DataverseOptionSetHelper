@@ -211,8 +211,11 @@ class _ManualTab(QWidget):
 #  Tab 2 – Microsoft Interactive Login
 # ═══════════════════════════════════════════════════════════
 
+_DYNAMICS_CLIENT_ID = "51f81489-12ee-4a9e-aaae-a2591f45987d"
+
+
 class _InteractiveTab(QWidget):
-    """MSAL device-code flow — no client secret required."""
+    """MSAL device-code flow — no client secret or app registration required."""
 
     def __init__(self, creds: Credentials) -> None:
         super().__init__()
@@ -221,8 +224,8 @@ class _InteractiveTab(QWidget):
         layout = QVBoxLayout(self)
 
         info = QLabel(
-            "Sign in with your Microsoft 365 account.\n"
-            "No client secret is needed — a login wizard will open and guide you."
+            "Sign in with your Microsoft 365 account — no client secret or app registration needed.\n"
+            "Uses Microsoft's own Dynamics CRM public client, just like XrmToolBox."
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -232,14 +235,18 @@ class _InteractiveTab(QWidget):
 
         self.txt_url = QLineEdit(creds.environment_url)
         self.txt_url.setPlaceholderText("https://yourorg.crm4.dynamics.com/")
-        self.txt_tenant = QLineEdit(creds.tenant_id)
-        self.txt_tenant.setPlaceholderText("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  (or 'common')")
-        self.txt_client = QLineEdit(creds.client_id)
-        self.txt_client.setPlaceholderText("Azure AD app (public client) client ID")
+        self.txt_tenant = QLineEdit(creds.tenant_id or "common")
+        self.txt_tenant.setPlaceholderText("Tenant ID or 'common'")
+
+        # Pre-fill with Microsoft's well-known Dynamics CRM public client ID.
+        # Users can override this with their own app registration if needed.
+        client_id = creds.client_id if creds.client_id else _DYNAMICS_CLIENT_ID
+        self.txt_client = QLineEdit(client_id)
+        self.txt_client.setPlaceholderText("Client ID (pre-filled with Microsoft's public app)")
 
         form.addRow("Environment URL *:", self.txt_url)
-        form.addRow("Tenant ID *:", self.txt_tenant)
-        form.addRow("Client ID *:", self.txt_client)
+        form.addRow("Tenant ID:", self.txt_tenant)
+        form.addRow("Client ID:", self.txt_client)
         layout.addWidget(group)
 
         btn_row = QHBoxLayout()
@@ -256,11 +263,10 @@ class _InteractiveTab(QWidget):
 
     def _start_wizard(self) -> None:
         url = self.txt_url.text().strip()
-        tenant = self.txt_tenant.text().strip()
-        client = self.txt_client.text().strip()
-        missing = [n for n, v in [("URL", url), ("Tenant ID", tenant), ("Client ID", client)] if not v]
-        if missing:
-            self.lbl_status.setText(f"⚠ Please fill in: {', '.join(missing)}")
+        tenant = self.txt_tenant.text().strip() or "common"
+        client = self.txt_client.text().strip() or _DYNAMICS_CLIENT_ID
+        if not url:
+            self.lbl_status.setText("⚠ Environment URL is required")
             return
 
         from optionset_qt.views.login_wizard import LoginWizardDialog
@@ -287,8 +293,8 @@ class _InteractiveTab(QWidget):
             return None
         return Credentials(
             environment_url=self.txt_url.text().strip(),
-            tenant_id=self.txt_tenant.text().strip(),
-            client_id=self.txt_client.text().strip(),
+            tenant_id=self.txt_tenant.text().strip() or "common",
+            client_id=self.txt_client.text().strip() or _DYNAMICS_CLIENT_ID,
             auth_method=AuthMethod.INTERACTIVE,
         )
 
@@ -298,8 +304,8 @@ class _InteractiveTab(QWidget):
     def values(self) -> tuple[str, str, str]:
         return (
             self.txt_url.text().strip(),
-            self.txt_tenant.text().strip(),
-            self.txt_client.text().strip(),
+            self.txt_tenant.text().strip() or "common",
+            self.txt_client.text().strip() or _DYNAMICS_CLIENT_ID,
         )
 
 

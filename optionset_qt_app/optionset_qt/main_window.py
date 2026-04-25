@@ -62,7 +62,8 @@ class MainWindow(QMainWindow):
 
         self._settings = QSettings("OptionSetHelper", "QtApp")
         self._svc: Optional[DataverseOptionSetService] = None
-        self._optionset_infos: list[OptionSetInfo] = []
+        self._optionset_infos: list[OptionSetInfo] = []   # full list from Dataverse
+        self._displayed_infos: list[OptionSetInfo] = []   # what the table currently shows
         self._thread: Optional[QThread] = None
 
         self._connect_actions()
@@ -143,8 +144,8 @@ class MainWindow(QMainWindow):
     def _ask_optionset_name(self, title: str = "OptionSet name") -> str | None:
         row = self.ui.tbl_optionsets.currentRow()
         default = ""
-        if 0 <= row < len(self._optionset_infos):
-            default = self._optionset_infos[row].name
+        if 0 <= row < len(self._displayed_infos):
+            default = self._displayed_infos[row].name
         name, ok = QInputDialog.getText(self, title, "OptionSet name:", text=default)
         if ok and name.strip():
             return name.strip()
@@ -272,6 +273,7 @@ class MainWindow(QMainWindow):
         self._status(f"{len(self._optionset_infos)} OptionSets loaded")
 
     def _populate_optionsets_table(self, infos: list[OptionSetInfo]) -> None:
+        self._displayed_infos = infos  # keep in sync so row indices always match
         tbl = self.ui.tbl_optionsets
         tbl.setRowCount(0)
         for info in infos:
@@ -302,9 +304,9 @@ class MainWindow(QMainWindow):
     def _on_optionset_selected(
         self, row: int, _col: int, _prev_row: int, _prev_col: int
     ) -> None:
-        if row < 0 or row >= len(self._optionset_infos):
+        if row < 0 or row >= len(self._displayed_infos):
             return
-        info = self._optionset_infos[row]
+        info = self._displayed_infos[row]
         raw_opts = info.raw.get("Options", [])
         if raw_opts:
             self._show_options(info.name, raw_opts)
