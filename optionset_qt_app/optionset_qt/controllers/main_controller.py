@@ -19,8 +19,10 @@ from OptionSetHelper import (
     BatchReport,
     DataverseOptionSetService,
     OptionItem,
+    create_service_from_credentials,
     create_service_from_env,
 )
+from optionset_qt.auth.credentials import Credentials
 
 BATCH_SIZE = 50
 
@@ -88,26 +90,38 @@ def _load_json(path: str) -> list[OptionItem]:
 # Workers (run inside QThread)
 # ═══════════════════════════════════════════════════════════════════
 
-class AuthWorker(QObject):
-    """Authenticate with Dataverse."""
+class ClientCredentialsAuthWorker(QObject):
+    """Authenticate using a Credentials object (env-file or manual entry)."""
     finished = Signal(object)       # DataverseOptionSetService | None
     error = Signal(str)
     log = Signal(str)
 
-    def __init__(self, env_path: str):
+    def __init__(self, credentials: Credentials) -> None:
         super().__init__()
-        self.env_path = env_path
+        self.credentials = credentials
 
     def run(self) -> None:
         try:
             self.log.emit("Authenticating …")
-            svc = create_service_from_env(self.env_path)
+            svc = create_service_from_credentials(self.credentials)
             svc.get_bearer_token()
             self.log.emit("✅ Authenticated successfully")
             self.finished.emit(svc)
         except Exception as exc:
             self.error.emit(str(exc))
             self.finished.emit(None)
+
+
+class AuthWorker(ClientCredentialsAuthWorker):
+    """Legacy shim: accepts an env_path string for backward compatibility."""
+
+    def __init__(self, env_path: str) -> None:
+        from optionset_qt.auth.credentials import parse_env_file
+        try:
+            creds = parse_env_file(env_path)
+        except Exception:
+            creds = Credentials()
+        super().__init__(creds)
 
 
 class ListGlobalWorker(QObject):

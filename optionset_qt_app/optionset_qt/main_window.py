@@ -5,9 +5,8 @@ All Dataverse calls run in a QThread so the GUI never blocks.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import QSettings, QThread, Qt
 from PySide6.QtWidgets import (
@@ -19,11 +18,12 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
-from OptionSetHelper import DataverseOptionSetService, OptionItem
+from OptionSetHelper import DataverseOptionSetService, OptionItem, create_service_from_credentials
 
+from optionset_qt.auth.credentials import AuthMethod, Credentials, parse_env_file
 from optionset_qt.controllers.main_controller import (
-    AuthWorker,
     BulkOperationWorker,
+    ClientCredentialsAuthWorker,
     CreateGlobalWorker,
     FetchOptionsWorker,
     InsertSingleWorker,
@@ -39,6 +39,17 @@ from optionset_qt.ui.main_window_ui import Ui_MainWindow
 from optionset_qt.views.bulk_progress_dialog import BulkProgressDialog
 from optionset_qt.views.settings_dialog import SettingsDialog
 
+# QSettings keys
+_K_TAB = "auth/active_tab"
+_K_ENV_PATH = "auth/env_path"
+_K_M_URL = "auth/manual/env_url"
+_K_M_TENANT = "auth/manual/tenant_id"
+_K_M_CLIENT = "auth/manual/client_id"
+_K_M_SECRET = "auth/manual/client_secret"
+_K_I_URL = "auth/interactive/env_url"
+_K_I_TENANT = "auth/interactive/tenant_id"
+_K_I_CLIENT = "auth/interactive/client_id"
+
 
 class MainWindow(QMainWindow):
     """Application main window."""
@@ -46,25 +57,16 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        # ── UI setup ────────────────────────────────────────
         self.ui = Ui_MainWindow()
         self.ui.setup_ui(self)
 
-        # ── state ───────────────────────────────────────────
         self._settings = QSettings("OptionSetHelper", "QtApp")
         self._svc: Optional[DataverseOptionSetService] = None
         self._optionset_infos: list[OptionSetInfo] = []
-        self._thread: Optional[QThread] = None  # current bg thread
-        self._env_path: str = self._settings.value("env_path", "")
+        self._thread: Optional[QThread] = None
 
-        # ── wire signals ────────────────────────────────────
         self._connect_actions()
-
-        # ── auto-connect if .env is known ───────────────────
-        if self._env_path and Path(self._env_path).is_file():
-            self._authenticate(self._env_path)
-        else:
-            self._log("Open Settings (File → Settings) to configure your .env file.")
+        self._auto_connect()
 
     # ═══════════════════════════════════════════════════════════
     #  Signal wiring
@@ -72,25 +74,43 @@ class MainWindow(QMainWindow):
 
     def _connect_actions(self) -> None:
         ui = self.ui
-
-        # File menu
         ui.action_settings.triggered.connect(self._open_settings)
         ui.action_quit.triggered.connect(self.close)
-
-        # Actions menu / toolbar
         ui.action_refresh.triggered.connect(self._refresh_list)
         ui.action_create_global.triggered.connect(self._create_global)
         ui.action_insert_single.triggered.connect(self._insert_single)
         ui.action_bulk_insert.triggered.connect(lambda: self._bulk_op("insert"))
         ui.action_bulk_update.triggered.connect(lambda: self._bulk_op("update"))
         ui.action_bulk_delete.triggered.connect(lambda: self._bulk_op("delete"))
-
-        # Tables
         ui.tbl_optionsets.currentCellChanged.connect(self._on_optionset_selected)
-
-        # Search
         ui.btn_search.clicked.connect(self._filter_table)
         ui.search_input.returnPressed.connect(self._filter_table)
+
+    # ═══════════════════════════════════════════════════════════
+    #  Auto-connect on startup
+    # ═══════════════════════════════════════════════════════════
+
+    def _auto_connect(self) -> None:
+        tab = int(self._settings.value(_K_TAB, 0))
+        if tab == 0:
+            env_path = self._settings.value(_K_ENV_PATH, "")
+            # Fallback to legacy key
+            if not env_path:
+                env_path = self._settings.value("env_path", "")
+            if env_path and Path(env_path).is_file():
+                try:
+                    creds = parse_env_file(env_path)
+                    self._authenticate_with_credentials(creds)
+                    return
+                except Exception:
+                    pass
+        elif tab == 1:
+            creds = self._load_manual_creds()
+            if creds and creds.is_complete_for_client_credentials():
+                self._authenticate_with_credentials(creds)
+                return
+        # Interactive (tab 2) or no saved credentials — prompt the user
+        self._log("Open Settings (File → Settings) to configure your connection.")
 
     # ═══════════════════════════════════════════════════════════
     #  Helpers
@@ -107,13 +127,11 @@ class MainWindow(QMainWindow):
             return True
         QMessageBox.warning(
             self, "Not connected",
-            "Please configure your .env first (File → Settings).",
+            "Please configure your connection first (File → Settings).",
         )
         return False
 
     def _start_worker(self, worker, thread: QThread) -> None:
-        """Move *worker* to *thread*, start it, and keep a reference."""
-        # clean previous thread
         if self._thread is not None and self._thread.isRunning():
             self._thread.quit()
             self._thread.wait(2000)
@@ -125,37 +143,103 @@ class MainWindow(QMainWindow):
     def _ask_optionset_name(self, title: str = "OptionSet name") -> str | None:
         row = self.ui.tbl_optionsets.currentRow()
         default = ""
-        if row >= 0 and row < len(self._optionset_infos):
+        if 0 <= row < len(self._optionset_infos):
             default = self._optionset_infos[row].name
         name, ok = QInputDialog.getText(self, title, "OptionSet name:", text=default)
         if ok and name.strip():
             return name.strip()
         return None
 
+    # ── Credential persistence helpers ──────────────────────────────
+
+    def _load_manual_creds(self) -> Credentials:
+        return Credentials(
+            environment_url=self._settings.value(_K_M_URL, ""),
+            tenant_id=self._settings.value(_K_M_TENANT, ""),
+            client_id=self._settings.value(_K_M_CLIENT, ""),
+            client_secret=self._settings.value(_K_M_SECRET, ""),
+        )
+
+    def _load_interactive_creds(self) -> Credentials:
+        return Credentials(
+            environment_url=self._settings.value(_K_I_URL, ""),
+            tenant_id=self._settings.value(_K_I_TENANT, ""),
+            client_id=self._settings.value(_K_I_CLIENT, ""),
+            auth_method=AuthMethod.INTERACTIVE,
+        )
+
+    def _save_settings(
+        self,
+        dlg: SettingsDialog,
+        creds: Credentials,
+    ) -> None:
+        tab = dlg.active_tab()
+        self._settings.setValue(_K_TAB, tab)
+        if tab == 0:
+            self._settings.setValue(_K_ENV_PATH, dlg.env_path())
+            self._settings.setValue("env_path", dlg.env_path())  # legacy key
+        elif tab == 1:
+            url, tenant, client, secret = dlg.manual_values()
+            self._settings.setValue(_K_M_URL, url)
+            self._settings.setValue(_K_M_TENANT, tenant)
+            self._settings.setValue(_K_M_CLIENT, client)
+            self._settings.setValue(_K_M_SECRET, secret)
+        else:
+            url, tenant, client = dlg.interactive_values()
+            self._settings.setValue(_K_I_URL, url)
+            self._settings.setValue(_K_I_TENANT, tenant)
+            self._settings.setValue(_K_I_CLIENT, client)
+
     # ═══════════════════════════════════════════════════════════
     #  Settings / Authentication
     # ═══════════════════════════════════════════════════════════
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self, self._env_path)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            path = dlg.env_path()
-            if path:
-                self._env_path = path
-                self._settings.setValue("env_path", path)
-                self._authenticate(path)
+        tab = int(self._settings.value(_K_TAB, 0))
+        dlg = SettingsDialog(
+            self,
+            env_path=self._settings.value(_K_ENV_PATH, self._settings.value("env_path", "")),
+            manual_creds=self._load_manual_creds(),
+            interactive_creds=self._load_interactive_creds(),
+            active_tab=tab,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
 
-    def _authenticate(self, env_path: str) -> None:
+        creds = dlg.credentials()
+        if not creds:
+            return
+
+        self._save_settings(dlg, creds)
+
+        provider = dlg.token_provider()
+        if provider is not None:
+            self._authenticate_with_provider(creds, provider)
+        else:
+            self._authenticate_with_credentials(creds)
+
+    def _authenticate_with_credentials(self, creds: Credentials) -> None:
         self._status("Authenticating …")
         thread = QThread(self)
-        worker = AuthWorker(env_path)
+        worker = ClientCredentialsAuthWorker(creds)
         worker.log.connect(self._log)
         worker.error.connect(lambda e: self._log(f"❌ {e}"))
         worker.finished.connect(self._on_auth_finished)
         worker.finished.connect(thread.quit)
         self._start_worker(worker, thread)
-        # prevent GC
-        self._auth_worker = worker
+        self._auth_worker = worker  # prevent GC
+
+    def _authenticate_with_provider(
+        self, creds: Credentials, provider: Callable[[], str]
+    ) -> None:
+        self._status("Connecting …")
+        try:
+            svc = create_service_from_credentials(creds, token_provider=provider)
+            self._log("✅ Authenticated via Microsoft Login")
+            self._on_auth_finished(svc)
+        except Exception as exc:
+            self._log(f"❌ {exc}")
+            self._status("Authentication failed")
 
     def _on_auth_finished(self, svc: DataverseOptionSetService | None) -> None:
         self._svc = svc
@@ -215,13 +299,12 @@ class MainWindow(QMainWindow):
     #  Show options for selected OptionSet
     # ═══════════════════════════════════════════════════════════
 
-    def _on_optionset_selected(self, row: int, _col: int, _prev_row: int, _prev_col: int) -> None:
+    def _on_optionset_selected(
+        self, row: int, _col: int, _prev_row: int, _prev_col: int
+    ) -> None:
         if row < 0 or row >= len(self._optionset_infos):
             return
         info = self._optionset_infos[row]
-        if info.name != self._optionset_infos[row].name:
-            return
-        # Use the raw data already fetched if available
         raw_opts = info.raw.get("Options", [])
         if raw_opts:
             self._show_options(info.name, raw_opts)
@@ -268,19 +351,17 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
         name = name.strip()
-
-        label, ok = QInputDialog.getText(self, "Create Global OptionSet", "Display label:", text=name)
+        label, ok = QInputDialog.getText(
+            self, "Create Global OptionSet", "Display label:", text=name
+        )
         if not ok or not label.strip():
             return
-        label = label.strip()
-
         path, _ = QFileDialog.getOpenFileName(
             self, "Select options file (CSV / JSON)", "",
             "Data Files (*.csv *.json);;All Files (*)",
         )
         if not path:
             return
-
         try:
             options = load_options_from_file(path)
         except Exception as exc:
@@ -288,7 +369,7 @@ class MainWindow(QMainWindow):
             return
 
         thread = QThread(self)
-        worker = CreateGlobalWorker(self._svc, name, label, options)
+        worker = CreateGlobalWorker(self._svc, name, label.strip(), options)
         worker.log.connect(self._log)
         worker.error.connect(lambda e: self._log(f"❌ {e}"))
         worker.finished.connect(lambda ok: self._on_create_finished(ok, name))
@@ -333,7 +414,7 @@ class MainWindow(QMainWindow):
     def _on_insert_finished(self, success: bool, name: str) -> None:
         if success:
             self._log(f"✅ Option inserted into '{name}'")
-            self._fetch_options_remote(name)  # refresh right panel
+            self._fetch_options_remote(name)
         else:
             QMessageBox.warning(self, "Failed", "Insert failed. See log.")
 
@@ -347,36 +428,27 @@ class MainWindow(QMainWindow):
         name = self._ask_optionset_name(f"Bulk {operation.title()} – OptionSet")
         if not name:
             return
-
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            f"Select file for bulk {operation}",
-            "",
+            self, f"Select file for bulk {operation}", "",
             "Data Files (*.csv *.json);;All Files (*)",
         )
         if not path:
             return
-
         try:
             options = load_options_from_file(path)
         except Exception as exc:
             QMessageBox.critical(self, "File error", str(exc))
             return
-
         if not options:
             QMessageBox.information(self, "Empty", "No options found in file.")
             return
 
-        # Progress dialog
         dlg = BulkProgressDialog(f"Bulk {operation.title()}", self)
         dlg.show()
 
         thread = QThread(self)
         worker = BulkOperationWorker(
-            self._svc,
-            options,
-            name,
-            operation,
+            self._svc, options, name, operation,
             safe_insert=(operation == "insert"),
         )
         worker.log.connect(self._log)
@@ -388,15 +460,15 @@ class MainWindow(QMainWindow):
         worker.progress.connect(dlg.set_batch_progress)
         worker.finished.connect(lambda r: self._on_bulk_finished(r, operation, name, dlg))
         worker.finished.connect(thread.quit)
-
         dlg.cancel_requested.connect(thread.requestInterruption)
 
         self._start_worker(worker, thread)
-        # prevent GC
         self._bulk_worker = worker
         self._bulk_dlg = dlg
 
-    def _on_bulk_finished(self, report, operation: str, name: str, dlg: BulkProgressDialog) -> None:
+    def _on_bulk_finished(
+        self, report, operation: str, name: str, dlg: BulkProgressDialog
+    ) -> None:
         if report is not None:
             summary = (
                 f"Bulk {operation} complete – "

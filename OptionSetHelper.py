@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -144,12 +144,17 @@ class DataverseOptionSetService:
         environment_url: str,
         tenant_id: str,
         client_id: str,
-        client_secret: str,
+        client_secret: str = "",
+        *,
+        token_provider: Optional[Callable[[], str]] = None,
     ):
         self.environment_url = environment_url.rstrip("/")
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
+        # Optional external token provider (DIP): if supplied, get_bearer_token()
+        # delegates to it instead of running the built-in client-credentials flow.
+        self._token_provider = token_provider
 
         self._token: str | None = None
         self._token_expiry: float = 0.0  # epoch seconds
@@ -159,11 +164,19 @@ class DataverseOptionSetService:
     # ------------------------------------------------------------------
     def get_bearer_token(self, *, force_new: bool = False) -> str:
         """
-        Obtain a Bearer token via OAuth2 client-credentials.
+        Obtain a Bearer token.
 
-        * Cached token is reused if still valid (with 60 s margin).
-        * ``force_new=True`` always fetches a fresh token (use for batch).
+        If a ``token_provider`` was supplied at construction time, it is called
+        unconditionally (the provider handles its own caching / refresh).
+        Otherwise the built-in OAuth2 client-credentials flow runs, with the
+        cached token reused when still valid (60 s safety margin).
+        ``force_new=True`` bypasses the local cache (has no effect with an
+        external provider since the provider manages its own cache).
         """
+        if self._token_provider is not None:
+            self._token = self._token_provider()
+            return self._token  # type: ignore[return-value]
+
         now = time.time()
         if not force_new and self._token and now < self._token_expiry:
             logger.debug("Reusing cached token (expires in %.0f s)", self._token_expiry - now)
@@ -769,5 +782,24 @@ def create_service_from_env(env_path: str = ".env") -> DataverseOptionSetService
         tenant_id=os.environ["tenant_id"],
         client_id=os.environ["client_id"],
         client_secret=os.environ["client_secret"],
+    )
+
+
+def create_service_from_credentials(
+    credentials: Any,
+    *,
+    token_provider: Optional[Callable[[], str]] = None,
+) -> DataverseOptionSetService:
+    """Instantiate the service from a Credentials object (or any duck-typed equivalent).
+
+    Pass *token_provider* when using interactive / MSAL auth; leave it ``None``
+    for the built-in client-credentials flow (requires ``client_secret``).
+    """
+    return DataverseOptionSetService(
+        environment_url=credentials.environment_url,
+        tenant_id=credentials.tenant_id,
+        client_id=credentials.client_id,
+        client_secret=getattr(credentials, "client_secret", ""),
+        token_provider=token_provider,
     )
 

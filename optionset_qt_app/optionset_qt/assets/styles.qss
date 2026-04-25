@@ -1,12 +1,19 @@
 /* ───────────────────────────────────────────────────────
    Dataverse OptionSet Helper – global Qt stylesheet
+   Palette-aware: adapts automatically to light & dark themes.
+   Only the Microsoft blue accent (#0078d4) and the intentional
+   dark log area (#1e1e1e) are hard-coded.
    ─────────────────────────────────────────────────────── */
 
 /* ── Base ───────────────────────────────────────────── */
 QMainWindow, QDialog {
-    background-color: #f5f5f5;
+    background-color: palette(window);
     font-family: "Segoe UI", "Noto Sans", sans-serif;
     font-size: 13px;
+    color: palette(window-text);
+}
+QWidget {
+    color: palette(window-text);
 }
 
 /* ── Menu & Toolbar ─────────────────────────────────── */
@@ -19,30 +26,48 @@ QMenuBar::item:selected {
     background-color: #106ebe;
 }
 QMenu {
-    background-color: white;
-    border: 1px solid #ccc;
+    background-color: palette(base);
+    color: palette(text);
+    border: 1px solid palette(mid);
 }
 QMenu::item:selected {
     background-color: #0078d4;
     color: white;
 }
 QToolBar {
-    background: #e6e6e6;
-    border-bottom: 1px solid #ccc;
+    background: palette(button);
+    border-bottom: 1px solid palette(mid);
     spacing: 6px;
     padding: 3px;
+}
+QToolButton {
+    background: transparent;
+    color: palette(button-text);
+    border-radius: 4px;
+    padding: 2px 6px;
+}
+QToolButton:hover {
+    background-color: palette(midlight);
+}
+
+/* ── Labels ─────────────────────────────────────────── */
+QLabel {
+    color: palette(window-text);
 }
 
 /* ── Tables ─────────────────────────────────────────── */
 QTableWidget {
-    gridline-color: #ddd;
-    selection-background-color: #cce4f7;
-    selection-color: #000;
-    alternate-background-color: #fafafa;
+    gridline-color: palette(mid);
+    selection-background-color: #0078d4;
+    selection-color: white;
+    alternate-background-color: palette(alternateBase);
+    background-color: palette(base);
+    color: palette(text);
 }
 QHeaderView::section {
-    background-color: #e0e0e0;
-    border: 1px solid #ccc;
+    background-color: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
     padding: 4px;
     font-weight: 600;
 }
@@ -63,23 +88,47 @@ QPushButton:pressed {
     background-color: #005a9e;
 }
 QPushButton:disabled {
-    background-color: #bbb;
+    background-color: palette(mid);
+    color: palette(dark);
 }
 
 /* ── Line edits ─────────────────────────────────────── */
 QLineEdit {
-    border: 1px solid #ccc;
+    border: 1px solid palette(mid);
     border-radius: 4px;
     padding: 4px 8px;
-    background: white;
+    background: palette(base);
+    color: palette(text);
 }
 QLineEdit:focus {
     border-color: #0078d4;
 }
+QLineEdit:read-only {
+    background: palette(window);
+    color: palette(mid);
+}
 
-/* ── Text edit (log) ────────────────────────────────── */
+/* ── Combo box ──────────────────────────────────────── */
+QComboBox {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 4px 8px;
+    background: palette(base);
+    color: palette(text);
+}
+QComboBox::drop-down {
+    border: none;
+}
+QComboBox QAbstractItemView {
+    background: palette(base);
+    color: palette(text);
+    selection-background-color: #0078d4;
+    selection-color: white;
+}
+
+/* ── Text edit (log) — intentionally always dark ────── */
 QTextEdit {
-    border: 1px solid #ccc;
+    border: 1px solid palette(mid);
     border-radius: 4px;
     background-color: #1e1e1e;
     color: #d4d4d4;
@@ -90,9 +139,11 @@ QTextEdit {
 
 /* ── Progress bar ───────────────────────────────────── */
 QProgressBar {
-    border: 1px solid #ccc;
+    border: 1px solid palette(mid);
     border-radius: 4px;
     text-align: center;
+    background: palette(base);
+    color: palette(text);
     height: 18px;
 }
 QProgressBar::chunk {
@@ -102,27 +153,57 @@ QProgressBar::chunk {
 
 /* ── Status bar ─────────────────────────────────────── */
 QStatusBar {
-    background: #e6e6e6;
-    border-top: 1px solid #ccc;
+    background: palette(button);
+    color: palette(button-text);
+    border-top: 1px solid palette(mid);
     font-size: 12px;
 }
 
-/* ── Group boxes (dialogs) ──────────────────────────── */
+/* ── Group boxes ────────────────────────────────────── */
 QGroupBox {
+    color: palette(window-text);
     font-weight: 600;
-    border: 1px solid #ccc;
+    border: 1px solid palette(mid);
     border-radius: 4px;
     margin-top: 10px;
     padding-top: 14px;
 }
 QGroupBox::title {
+    color: palette(window-text);
     subcontrol-origin: margin;
     left: 10px;
     padding: 0 4px;
 }
 
+/* ── Tab widget ─────────────────────────────────────── */
+QTabWidget::pane {
+    border: 1px solid palette(mid);
+    background: palette(window);
+}
+QTabBar::tab {
+    background: palette(button);
+    color: palette(button-text);
+    border: 1px solid palette(mid);
+    border-bottom: none;
+    padding: 6px 14px;
+    border-radius: 4px 4px 0 0;
+}
+QTabBar::tab:selected {
+    background: palette(window);
+    color: palette(window-text);
+    font-weight: 600;
+}
+QTabBar::tab:hover:!selected {
+    background: palette(midlight);
+}
+
 /* ── Splitter handle ────────────────────────────────── */
 QSplitter::handle:horizontal {
     width: 4px;
-    background: #ccc;
+    background: palette(mid);
+}
+
+/* ── Dialog button box ──────────────────────────────── */
+QDialogButtonBox QPushButton {
+    min-width: 80px;
 }
