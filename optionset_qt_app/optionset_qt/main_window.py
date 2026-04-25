@@ -63,7 +63,9 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("OptionSetHelper", "QtApp")
         self._svc: Optional[DataverseOptionSetService] = None
         self._optionset_infos: list[OptionSetInfo] = []   # full list from Dataverse
-        self._displayed_infos: list[OptionSetInfo] = []   # what the table currently shows
+        self._displayed_infos: list[OptionSetInfo] = []   # what the left table shows
+        self._current_option_values: list = []            # full options for selected OptionSet
+        self._current_optionset_name: str = ""
         self._thread: Optional[QThread] = None
 
         self._connect_actions()
@@ -86,6 +88,9 @@ class MainWindow(QMainWindow):
         ui.tbl_optionsets.currentCellChanged.connect(self._on_optionset_selected)
         ui.btn_search.clicked.connect(self._filter_table)
         ui.search_input.returnPressed.connect(self._filter_table)
+        ui.btn_options_search.clicked.connect(self._filter_options_table)
+        ui.options_search_input.returnPressed.connect(self._filter_options_table)
+        ui.options_search_input.textChanged.connect(self._filter_options_table)
 
     # ═══════════════════════════════════════════════════════════
     #  Auto-connect on startup
@@ -327,8 +332,30 @@ class MainWindow(QMainWindow):
         self._fetch_worker = worker
 
     def _show_options(self, name: str, raw_options: list) -> None:
-        vals = extract_option_values(raw_options)
-        self.ui.lbl_detail_title.setText(f"{name}  ({len(vals)} options)")
+        self._current_optionset_name = name
+        self._current_option_values = extract_option_values(raw_options)
+        self.ui.options_search_input.clear()
+        self._populate_options_table(self._current_option_values)
+
+    def _filter_options_table(self) -> None:
+        text = self.ui.options_search_input.text().strip().lower()
+        if not text:
+            self._populate_options_table(self._current_option_values)
+            return
+        filtered = [
+            v for v in self._current_option_values
+            if text in v.label.lower() or text in str(v.value)
+        ]
+        self._populate_options_table(filtered)
+
+    def _populate_options_table(self, vals: list) -> None:
+        total = len(self._current_option_values)
+        showing = len(vals)
+        name = self._current_optionset_name
+        if showing < total:
+            self.ui.lbl_detail_title.setText(f"{name}  ({showing} / {total} options)")
+        else:
+            self.ui.lbl_detail_title.setText(f"{name}  ({total} options)")
         tbl = self.ui.tbl_options
         tbl.setSortingEnabled(False)
         tbl.setRowCount(0)
@@ -340,7 +367,7 @@ class MainWindow(QMainWindow):
             tbl.setItem(r, 0, item_val)
             tbl.setItem(r, 1, QTableWidgetItem(v.label))
         tbl.setSortingEnabled(True)
-        self._status(f"Showing {len(vals)} options for '{name}'")
+        self._status(f"Showing {showing}/{total} options for '{name}'")
 
     # ═══════════════════════════════════════════════════════════
     #  Create global OptionSet

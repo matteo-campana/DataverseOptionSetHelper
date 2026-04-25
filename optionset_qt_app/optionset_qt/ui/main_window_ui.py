@@ -136,6 +136,15 @@ class Ui_MainWindow:
         self.lbl_detail_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         right_layout.addWidget(self.lbl_detail_title)
 
+        # Options search bar
+        options_search_row = QHBoxLayout()
+        self.options_search_input = QLineEdit()
+        self.options_search_input.setPlaceholderText("Filter by label or value …")
+        self.btn_options_search = QPushButton("Filter")
+        options_search_row.addWidget(self.options_search_input, stretch=1)
+        options_search_row.addWidget(self.btn_options_search)
+        right_layout.addLayout(options_search_row)
+
         self.tbl_options = QTableWidget(0, 2)
         self.tbl_options.setHorizontalHeaderLabels(["Value", "Label"])
         self.tbl_options.horizontalHeader().setSectionResizeMode(
