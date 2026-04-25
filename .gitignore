@@ -1,3 +1,6 @@
+# Claude Code local memory
+.claude/
+
 # Build results
 bin/
 obj/

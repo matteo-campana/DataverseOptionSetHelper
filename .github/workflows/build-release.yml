@@ -1,0 +1,96 @@
+name: Build & Release
+
+# Triggers:
+#   • Push a tag  →  v1.0.0  (stable release)
+#                    v1.0.0-alpha / -beta / -rc  (pre-release)
+#   • Manual run →  choose tag + pre-release flag yourself
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g. v0.2.0-beta)"
+        required: true
+      prerelease:
+        description: "Mark as pre-release"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Resolve tag & pre-release flag ──────────────────────────
+      - name: Resolve version info
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+            $pre = "${{ inputs.prerelease }}" -eq "true"
+          } else {
+            $tag = "${{ github.ref_name }}"
+            $pre = $tag -match "-(alpha|beta|rc)"
+          }
+          echo "tag=$tag"           >> $env:GITHUB_OUTPUT
+          echo "prerelease=$pre"    >> $env:GITHUB_OUTPUT
+          echo "Version: $tag  |  Pre-release: $pre"
+
+      # ── Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: optionset_qt_app/requirements.txt
+
+      # ── Dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: optionset_qt_app
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # ── Build ────────────────────────────────────────────────────
+      - name: Build executable with PyInstaller
+        working-directory: optionset_qt_app
+        run: pyinstaller DataverseOptionSetHelper.spec --clean --noconfirm
+
+      # ── Package ──────────────────────────────────────────────────
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $tag  = "${{ steps.version.outputs.tag }}"
+          $dest = "DataverseOptionSetHelper-$tag-windows-x64.zip"
+          Compress-Archive `
+            -Path   "optionset_qt_app/dist/DataverseOptionSetHelper.exe" `
+            -DestinationPath $dest
+          echo "ASSET=$dest" >> $env:GITHUB_ENV
+
+      # ── Upload artifact (always, for inspection) ─────────────────
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DataverseOptionSetHelper-exe
+          path: optionset_qt_app/dist/DataverseOptionSetHelper.exe
+          retention-days: 14
+
+      # ── GitHub Release ───────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:         ${{ steps.version.outputs.tag }}
+          name:             Dataverse OptionSet Helper ${{ steps.version.outputs.tag }}
+          prerelease:       ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: true
+          files:            ${{ env.ASSET }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
